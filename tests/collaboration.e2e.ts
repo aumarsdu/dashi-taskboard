@@ -18,13 +18,25 @@ test('comment create, edit, delete and issue attachment upload, download, delete
   await expect(screen.getByText('Updated comment')).toBeVisible();
   await browser.reload();
   await expect(screen.getByText('Updated comment')).toBeVisible();
-  await browser.locator('.issue-attachments input[type=file]').setInputFiles(attachmentFixture);
-  await expect(screen.getByRole('button', 'Delete attachment.txt')).toBeVisible();
-  const downloaded = await browser.waitForDownload(() => screen.getByRole('link', 'Download attachment.txt').tap());
+  // Issue attachments live inline in the description: add the file in the
+  // description composer, then leave the composer (the Activity heading is a
+  // neutral blur target) so it saves and renders as an attachment card.
+  await screen.getByRole('button', 'Edit issue description').tap();
+  await browser.locator('.issue-description-composer input[type=file]').setInputFiles(attachmentFixture);
+  // The chip's remove control is revealed on chip hover, like the relation rows.
+  await browser.locator('.inline-media-attachment').filter({ hasText: 'attachment.txt' }).hover();
+  await expect(screen.getByRole('button', 'Remove attachment.txt')).toBeVisible();
+  await screen.getByRole('heading', 'Activity').tap();
+  await expect(screen.getByRole('link', /attachment\.txt/)).toBeVisible();
+  const downloaded = await browser.waitForDownload(() => screen.getByRole('link', /attachment\.txt/).tap());
   expect(await readFile(downloaded.absolutePath, 'utf8')).toBe('Dashi E2E attachment fixture\n');
-  await screen.getByRole('button', 'Delete attachment.txt').tap();
-  await screen.getByRole('button', 'Delete attachment').tap();
-  await expect(screen.getByRole('button', 'Delete attachment.txt')).toBeHidden();
+  // The saved card fills the read view, so a tap would land on its link; open
+  // the editor through the read view's own Enter shortcut instead.
+  await screen.getByRole('button', 'Edit issue description').press('Enter');
+  await browser.locator('.inline-media-attachment').filter({ hasText: 'attachment.txt' }).hover();
+  await screen.getByRole('button', 'Remove attachment.txt').tap();
+  await screen.getByRole('heading', 'Activity').tap();
+  await expect(screen.getByRole('link', /attachment\.txt/)).toBeHidden();
   await screen.getByRole('button', 'Comment actions').tap();
   await screen.getByRole('menuitem', 'Delete comment').tap();
   await screen.getByRole('alertdialog').getByRole('button', 'Delete comment').tap();
@@ -38,14 +50,21 @@ test('comment attachments are uploaded with the comment and removed through UI',
   await openIssue(screen, 'Comment attachment issue');
   await screen.getByRole('textbox', 'Leave a comment').fill('Comment with file');
   await browser.locator('.comment-composer input[type=file]').setInputFiles(attachmentFixture);
-  await expect(screen.getByRole('list', 'Pending comment attachments')).toContainText('attachment.txt');
+  // Pending files render as chips in the composer; the remove control is
+  // revealed on chip hover, like the relation rows.
+  await browser.locator('.inline-media-attachment').filter({ hasText: 'attachment.txt' }).hover();
+  await expect(screen.getByRole('button', 'Remove attachment.txt')).toBeVisible();
   await screen.getByRole('button', 'Comment').tap();
-  await expect(screen.getByRole('list', 'Comment attachments')).toContainText('attachment.txt');
+  await expect(screen.getByRole('link', /attachment\.txt/)).toBeVisible();
   await browser.reload();
-  await expect(screen.getByRole('list', 'Comment attachments')).toContainText('attachment.txt');
-  await screen.getByRole('button', 'Delete attachment.txt').tap();
-  await screen.getByRole('button', 'Delete attachment').tap();
-  await expect(screen.getByRole('list', 'Comment attachments')).toBeHidden();
+  await expect(screen.getByRole('link', /attachment\.txt/)).toBeVisible();
+  await screen.getByRole('button', 'Comment actions').tap();
+  await screen.getByRole('menuitem', 'Edit comment').tap();
+  await browser.locator('.inline-media-attachment').filter({ hasText: 'attachment.txt' }).hover();
+  await screen.getByRole('button', 'Remove attachment.txt').tap();
+  await screen.getByRole('button', 'Save').tap();
+  await expect(screen.getByRole('link', /attachment\.txt/)).toBeHidden();
+  await expect(screen.getByText('Comment with file')).toBeVisible();
 });
 
 test('parent, sub-issue, blocked-by, blocks and related relations can be added and removed', async ({ app, screen, browser }) => {

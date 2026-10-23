@@ -22,8 +22,8 @@ test('issue creation, inline editing, properties, recurrence and persisted reloa
   await screen.getByLabel('Search labels').press('Escape');
   await screen.getByLabel('Start date').fill('2026-10-06');
   await screen.getByLabel('Due date').fill('2026-10-07');
-  await expect(screen.getByLabel('Recurrence')).toBeEnabled();
-  await screen.getByLabel('Recurrence').selectOption('Daily');
+  // Recurrence is a property picker like Status/Priority, not a native select.
+  await pick(screen, 'Recurrence', 'Daily');
   await expect.poll(async () => (await tasks(browser)).find(task => task.title === 'UI edited issue')).toMatchObject({
     description: 'Description saved through the UI', status: 'in_progress', priority: 'high',
     labels: ['e2e-label'], startDate: '2026-10-06', dueDate: '2026-10-07', recurrence: { interval: 1, unit: 'day' },
@@ -32,9 +32,10 @@ test('issue creation, inline editing, properties, recurrence and persisted reloa
   await expect(screen.getByLabel('Issue title')).toHaveValue('UI edited issue');
   await expect(screen.getByRole('button', 'Status')).toContainText('In progress');
   await expect(screen.getByLabel('Due date')).toHaveValue('2026-10-07');
-  await expect(screen.getByLabel('Recurrence')).toHaveValue('day');
+  await expect(screen.getByRole('button', 'Recurrence')).toContainText('Daily');
   await screen.getByLabel('Due date').fill('');
-  await expect(screen.getByLabel('Recurrence')).toBeDisabled();
+  // Clearing the due date also clears the recurrence.
+  await expect(screen.getByRole('button', 'Recurrence')).toContainText('Does not repeat');
   await expect.poll(async () => (await tasks(browser)).find(task => task.title === 'UI edited issue')?.recurrence).toBeNull();
 });
 

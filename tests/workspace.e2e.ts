@@ -72,9 +72,13 @@ test('search, status/priority/label filters and dashboard, board, list, gantt vi
   expect((await tasks(browser)).filter(task => task.title.startsWith('Search '))).toHaveLength(2);
 });
 
-test('theme persistence, language route and mobile viewport remain usable', async ({ app, screen, browser }) => {
-  await app.open('/?lang=en&theme=light');
-  await screen.getByRole('button', 'Switch to dark theme').tap();
+test('theme follows system color scheme, language route and mobile viewport remain usable', async ({ app, screen, browser }) => {
+  await app.open('/?lang=en');
+  // The manual theme toggle is gone: the board follows prefers-color-scheme
+  // and re-syncs live when the emulated system scheme changes.
+  await browser.emulateMedia({ colorScheme: 'light' });
+  await expect(browser.locator('html')).toHaveAttribute('data-theme', 'light');
+  await browser.emulateMedia({ colorScheme: 'dark' });
   await expect(browser.locator('html')).toHaveAttribute('data-theme', 'dark');
   await browser.goto('/?lang=en');
   await expect(browser.locator('html')).toHaveAttribute('data-theme', 'dark');
