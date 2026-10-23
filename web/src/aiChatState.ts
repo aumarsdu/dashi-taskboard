@@ -6,14 +6,11 @@ import type {
   AiChatThread,
   AiChatThreadSnapshot,
   AiChatThreadStatus,
-  TaskboardCapabilities,
+  ComposerDocument,
+  ComposerNode,
+  ComposerTurnInput,
 } from "./types";
-
-export interface AiChatRouteState {
-  selectedThreadId: string | null;
-  pendingProjectId: string | null;
-  pendingIssueId: string | null;
-}
+import { COMPOSER_CONTRACT_VERSION } from "./types.ts";
 
 export const AI_CHAT_SKILL_MARKER = "\uFFFC";
 
@@ -40,27 +37,11 @@ export function parseAiChatComposerFragment(
   }
 }
 
-export function isAiChatCapabilityAvailable(capabilities?: TaskboardCapabilities): boolean {
-  return capabilities?.localAiChat === true;
-}
-
 export function buildThreadCreateInput(projectId: string, issueId: string | null) {
   if (!projectId) return null;
   return {
     projectId,
     ...(issueId ? { issueId } : {}),
-  };
-}
-
-export function routeChatState(
-  state: AiChatRouteState,
-  projectId: string | null,
-  issueId: string | null,
-): AiChatRouteState {
-  return {
-    ...state,
-    pendingProjectId: projectId,
-    pendingIssueId: issueId,
   };
 }
 
@@ -113,6 +94,54 @@ export function buildTurnInput(
   };
 }
 
+export function createComposerDocument(text = ""): ComposerDocument {
+  return {
+    version: 1,
+    nodes: text ? [{ type: "text", text }] : [],
+  };
+}
+
+export function normalizeComposerDocument(document: ComposerDocument): ComposerDocument {
+  const nodes: ComposerNode[] = [];
+  for (const node of document.nodes) {
+    if (node.type === "text") {
+      if (!node.text) continue;
+      const previous = nodes.at(-1);
+      if (previous?.type === "text") {
+        previous.text += node.text;
+      } else {
+        nodes.push({ type: "text", text: node.text });
+      }
+    } else {
+      nodes.push({
+        type: node.type,
+        candidateRef: node.candidateRef,
+        label: node.label,
+      });
+    }
+  }
+  return { version: 1, nodes };
+}
+
+export function serializeComposerDocument(document: ComposerDocument): ComposerDocument {
+  return normalizeComposerDocument(document);
+}
+
+export function buildComposerTurnInput(
+  document: ComposerDocument,
+  revision: string,
+  dangerFullAccessConfirmed: boolean,
+  attachments: AiChatAttachmentInput[] = [],
+): ComposerTurnInput {
+  return {
+    contractVersion: COMPOSER_CONTRACT_VERSION,
+    revision,
+    document: serializeComposerDocument(document),
+    ...(attachments.length > 0 ? { attachments } : {}),
+    ...(dangerFullAccessConfirmed ? { dangerFullAccessConfirmed: true } : {}),
+  };
+}
+
 export function chatPrimaryAction(
   status: AiChatThreadStatus,
   message: string,
@@ -129,10 +158,6 @@ export function needsDangerConfirmation(
   confirmed: boolean,
 ): boolean {
   return sandbox === "danger-full-access" && !confirmed;
-}
-
-export function shouldRefreshAiSnapshot(type: string): boolean {
-  return type === "ai.event" || type === "ai.run";
 }
 
 const VISIBLE_EVENT_TYPES = new Set([
@@ -187,7 +212,7 @@ export function filterVisibleAiEvents<
 export function aiChatEventStatus(
   event: Pick<AiChatEvent, "role" | "type" | "data">,
 ): "running" | "completed" | "failed" {
-  if (event.role === "error" || event.type === "error" || event.type === "turn.failed") {
+  if (event.role === "error" || event.type === "turn.failed") {
     return "failed";
   }
   const status = event.data?.status;

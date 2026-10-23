@@ -1,14 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import {
-  AUTOMATION_MODELS,
-  getAutomationModel,
-  withAutomationModel,
-  type AutomationModel,
-  type AutomationReasoningEffort,
-} from "../../../shared/taskboard-automation-options.mjs";
+import { LinearIcon } from "./LinearIcon";
+import { ProjectIcon, RecurrenceIcon } from "./SemanticIcons";
+import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { TaskboardIcon } from "./TaskboardIcon";
 import { useTaskboardI18n } from "../i18n";
+import { listenForMenuViewportChange, listenForOutsidePointerDown } from "../menuEvents";
+import type { AiChatModel } from "../types";
 
 type AutomationStatus = "ACTIVE" | "PAUSED";
 type AutomationQuotaState = "available" | "blocked" | "unknown" | "unavailable";
@@ -18,12 +16,13 @@ interface AutomationOptions {
   enabledByUser: boolean;
   quotaAware: boolean;
   intervalMinutes: IntervalMinutes;
-  model: AutomationModel;
-  reasoningEffort: AutomationReasoningEffort;
+  model: string;
+  reasoningEffort: string;
 }
 
 interface AutomationState extends AutomationOptions {
   status: AutomationStatus;
+  idleReason?: "checking-todos" | "waiting-todos";
   quota?: {
     state: AutomationQuotaState;
     checkedAt: number;
@@ -34,6 +33,7 @@ interface AutomationState extends AutomationOptions {
 
 interface ProjectAutomationMenuProps {
   automation?: Partial<AutomationState>;
+  models: AiChatModel[];
   pending: boolean;
   error: string | null;
   unavailableReason: string | null;
@@ -41,15 +41,7 @@ interface ProjectAutomationMenuProps {
   onChange: (options: AutomationOptions) => void;
 }
 
-const DEFAULT_OPTIONS: AutomationOptions = {
-  enabledByUser: false,
-  quotaAware: false,
-  intervalMinutes: 5,
-  model: "gpt-5.5",
-  reasoningEffort: "high",
-};
-
-const EFFORT_LABELS: Record<AutomationReasoningEffort, readonly [string, string]> = {
+const EFFORT_LABELS: Record<string, readonly [string, string]> = {
   low: ["轻度", "Low"],
   medium: ["中", "Medium"],
   high: ["高", "High"],
@@ -58,8 +50,26 @@ const EFFORT_LABELS: Record<AutomationReasoningEffort, readonly [string, string]
   ultra: ["极高 (ultra)", "Ultra"],
 };
 
+function automationOptions(
+  models: AiChatModel[],
+  automation?: Partial<AutomationState>,
+): AutomationOptions {
+  const model = models.find((candidate) => candidate.slug === automation?.model) ?? models[0];
+  const reasoningEffort = model?.supportedReasoningEfforts.includes(automation?.reasoningEffort ?? "")
+    ? automation?.reasoningEffort
+    : model?.defaultReasoningEffort;
+  return {
+    enabledByUser: automation?.enabledByUser ?? false,
+    quotaAware: automation?.quotaAware ?? false,
+    intervalMinutes: automation?.intervalMinutes ?? 5,
+    model: model?.slug ?? "",
+    reasoningEffort: reasoningEffort ?? "",
+  };
+}
+
 export function ProjectAutomationMenu({
   automation,
+  models,
   pending,
   error,
   unavailableReason,
@@ -71,11 +81,17 @@ export function ProjectAutomationMenu({
   const menuRef = useRef<HTMLDivElement>(null);
   const wasPendingRef = useRef(pending);
   const [open, setOpen] = useState(false);
+  const [pickerMenu, setPickerMenu] = useState<"interval" | "model" | "reasoning" | null>(null);
   const [position, setPosition] = useState({ left: 0, top: 0, ready: false });
-  const [draft, setDraft] = useState<AutomationOptions>(DEFAULT_OPTIONS);
+  const [draft, setDraft] = useState<AutomationOptions>(() => automationOptions(models, automation));
   const status = automation?.status ?? "PAUSED";
   const quota = automation?.quota;
-  const stateLabel = !automation?.enabledByUser
+  const idleLabel = automation?.enabledByUser && automation.idleReason === "checking-todos"
+    ? text("正在判断待办", "Checking todos")
+    : automation?.enabledByUser && automation.idleReason === "waiting-todos"
+      ? text("等待任务条件", "Waiting for task conditions")
+      : null;
+  const stateLabel = idleLabel ?? (!automation?.enabledByUser
     ? text("已暂停", "Paused")
     : automation.quotaAware && quota?.state === "blocked"
       ? text("额度暂停", "Paused by quota")
@@ -85,17 +101,22 @@ export function ProjectAutomationMenu({
           ? text("额度未知", "Quota unknown")
           : status === "ACTIVE"
             ? text("运行中", "Running")
-            : text("已暂停", "Paused");
-  const disabled = pending || Boolean(unavailableReason);
+            : text("已暂停", "Paused"));
+  const selectedModel = models.find((model) => model.slug === draft.model) ?? models[0];
+  const disabled = pending || !selectedModel || Boolean(unavailableReason);
 
   useEffect(() => {
     if (!open) return;
-    setDraft({ ...DEFAULT_OPTIONS, ...automation });
+    setDraft(automationOptions(models, automation));
+  }, [automation, models, open]);
+
+  useEffect(() => {
+    if (!open) setPickerMenu(null);
   }, [open]);
 
   useEffect(() => {
     if (wasPendingRef.current && !pending) {
-      setDraft({ ...DEFAULT_OPTIONS, ...automation });
+      setDraft(automationOptions(models, automation));
     }
     wasPendingRef.current = pending;
   }, [automation, pending]);
@@ -113,31 +134,22 @@ export function ProjectAutomationMenu({
 
   useEffect(() => {
     if (!open) return;
-    function closeFromOutside(event: PointerEvent) {
-      if (!menuRef.current?.contains(event.target as Node) && !triggerRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    }
-    function closeFromViewportChange() {
-      setOpen(false);
-    }
+    const close = () => setOpen(false);
+    const stopOutside = listenForOutsidePointerDown([triggerRef, menuRef], close);
+    const stopViewport = listenForMenuViewportChange(menuRef, close);
     function closeFromEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && !pickerMenu) {
         setOpen(false);
         triggerRef.current?.focus();
       }
     }
-    document.addEventListener("pointerdown", closeFromOutside);
     document.addEventListener("keydown", closeFromEscape);
-    window.addEventListener("resize", closeFromViewportChange);
-    window.addEventListener("scroll", closeFromViewportChange, true);
     return () => {
-      document.removeEventListener("pointerdown", closeFromOutside);
+      stopOutside();
+      stopViewport();
       document.removeEventListener("keydown", closeFromEscape);
-      window.removeEventListener("resize", closeFromViewportChange);
-      window.removeEventListener("scroll", closeFromViewportChange, true);
     };
-  }, [open]);
+  }, [open, pickerMenu]);
 
   const submitChange = (next: AutomationOptions) => {
     if (disabled) return;
@@ -216,48 +228,93 @@ export function ProjectAutomationMenu({
           )}
         </div>
       )}
-      <label className="project-automation-field">
+      <div className="project-automation-field">
         <span>{text("间隔", "Interval")}</span>
-        <select
-          value={draft.intervalMinutes}
+        <TaskPropertyPicker
+          value={String(draft.intervalMinutes)}
+          options={[5, 10, 15, 30, 60].map((minutes) => ({
+            value: String(minutes),
+            label: text(`${minutes} 分钟`, `${minutes} min`),
+            icon: <RecurrenceIcon color="currentColor" size={14} />,
+          }))}
+          open={pickerMenu === "interval"}
           disabled={disabled}
-          onChange={(event) => submitChange({
+          className="project-automation-picker"
+          triggerClassName="project-automation-picker-trigger"
+          ariaLabel={text("间隔", "Interval")}
+          onOpenChange={(open) => setPickerMenu(open ? "interval" : null)}
+          onChange={(value) => submitChange({
             ...draft,
-            intervalMinutes: Number(event.target.value) as IntervalMinutes,
+            intervalMinutes: Number(value) as IntervalMinutes,
           })}
-        >
-          {[5, 10, 15, 30, 60].map((minutes) => (
-            <option key={minutes} value={minutes}>{text(`${minutes} 分钟`, `${minutes} min`)}</option>
-          ))}
-        </select>
-      </label>
-      <label className="project-automation-field">
-        <span>{text("模型", "Model")}</span>
-        <select
-          value={draft.model}
-          disabled={disabled}
-          onChange={(event) => submitChange(withAutomationModel(draft, event.target.value as AutomationModel))}
-        >
-          {AUTOMATION_MODELS.map((model) => (
-            <option key={model.slug} value={model.slug}>{model.label}</option>
-          ))}
-        </select>
-      </label>
-      <label className="project-automation-field">
-        <span>{text("推理强度", "Reasoning effort")}</span>
-        <select
-          value={draft.reasoningEffort}
-          disabled={disabled}
-          onChange={(event) => submitChange({
-            ...draft,
-            reasoningEffort: event.target.value as AutomationReasoningEffort,
-          })}
-        >
-          {getAutomationModel(draft.model).efforts.map((effort) => (
-            <option key={effort} value={effort}>{text(...EFFORT_LABELS[effort])}</option>
-          ))}
-        </select>
-      </label>
+        />
+      </div>
+      {selectedModel && (
+        <>
+          <div className="project-automation-field">
+            <span>{text("模型", "Model")}</span>
+            <TaskPropertyPicker
+              value={draft.model}
+              options={models.map((model) => ({
+                value: model.slug,
+                label: model.displayName,
+                icon: <ProjectIcon color="currentColor" size={14} />,
+              }))}
+              open={pickerMenu === "model"}
+              disabled={disabled}
+              className="project-automation-picker"
+              triggerClassName="project-automation-picker-trigger"
+              ariaLabel={text("模型", "Model")}
+              onOpenChange={(open) => setPickerMenu(open ? "model" : null)}
+              onChange={(value) => {
+                const model = models.find((candidate) => candidate.slug === value);
+                if (!model) return;
+                submitChange({
+                  ...draft,
+                  model: value,
+                  reasoningEffort: model.supportedReasoningEfforts.includes(draft.reasoningEffort)
+                    ? draft.reasoningEffort
+                    : model.defaultReasoningEffort,
+                });
+              }}
+            />
+          </div>
+          <div className="project-automation-field">
+            <span>{text("推理强度", "Reasoning effort")}</span>
+            <TaskPropertyPicker
+              value={draft.reasoningEffort}
+              options={selectedModel.supportedReasoningEfforts.map((effort) => ({
+                value: effort,
+                label: EFFORT_LABELS[effort] ? text(...EFFORT_LABELS[effort]) : effort,
+                icon: <LinearIcon name="displayOptions" />,
+              }))}
+              open={pickerMenu === "reasoning"}
+              disabled={disabled}
+              className="project-automation-picker"
+              triggerClassName="project-automation-picker-trigger"
+              ariaLabel={text("推理强度", "Reasoning effort")}
+              onOpenChange={(open) => setPickerMenu(open ? "reasoning" : null)}
+              onChange={(value) => submitChange({
+                ...draft,
+                reasoningEffort: value,
+              })}
+            />
+          </div>
+        </>
+      )}
+      {idleLabel && (
+        <p className="project-automation-note" role="status">
+          {automation?.idleReason === "waiting-todos"
+            ? text(
+              "当前待办任务都需要等待，已暂停本轮自动认领。新增可执行任务，或更新任务说明、最新评论后，将自动重新判断。",
+              "Current tasks need to wait, so auto-claim is paused for now. New actionable tasks or changes to task descriptions or latest comments will trigger a new check.",
+            )
+            : text(
+              "正在确认待办任务是否可以开始，确认前暂停自动认领。",
+              "Checking whether tasks can start. Auto-claim is paused until the check is complete.",
+            )}
+        </p>
+      )}
       {unavailableReason && <p className="project-automation-note">{unavailableReason}</p>}
       {error && error !== unavailableReason && <p className="project-automation-error" role="alert">{error}</p>}
     </div>,
@@ -270,15 +327,15 @@ export function ProjectAutomationMenu({
         ref={triggerRef}
         type="button"
         className={`project-automation-trigger no-drag ${status === "ACTIVE" ? "is-active" : "is-paused"}`}
-        aria-label={status === "ACTIVE"
+        aria-label={idleLabel ?? (status === "ACTIVE"
           ? text("自动认领中", "Auto-claiming")
-          : text("自动化", "Automation")}
+          : text("自动化", "Automation"))}
         aria-busy={pending}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title={status === "ACTIVE"
+        title={idleLabel ?? (status === "ACTIVE"
           ? text("自动认领中", "Auto-claiming")
-          : text("自动化", "Automation")}
+          : text("自动化", "Automation"))}
         onClick={() => {
           if (!open) {
             setPosition((current) => ({ ...current, ready: false }));
@@ -288,9 +345,9 @@ export function ProjectAutomationMenu({
         }}
       >
         <TaskboardIcon name={status === "ACTIVE" ? "automationPause" : "automationPlay"} />
-        <span>{status === "ACTIVE"
+        <span>{idleLabel ?? (status === "ACTIVE"
           ? text("自动认领中", "Auto-claiming")
-          : text("自动化", "Automation")}</span>
+          : text("自动化", "Automation"))}</span>
       </button>
       {menu}
     </>

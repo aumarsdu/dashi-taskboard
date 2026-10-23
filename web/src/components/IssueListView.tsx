@@ -5,11 +5,10 @@ import { labelPresentation } from "../labels";
 import type { TaskCardPresentation } from "../taskConversations";
 import { TASK_PRIORITIES, TASK_STATUSES, type ActorIdentity, type Task, type TaskDraft, type TaskStatus } from "../types";
 import { ActorAvatar } from "./ActorAvatar";
-import { StatusIcon } from "./BoardColumn";
-import { LinearIcon, LinearPriorityIcon } from "./LinearIcon";
+import { LinearIcon } from "./LinearIcon";
+import { DueDateIcon, PriorityIcon, StatusIcon } from "./SemanticIcons";
 import { TaskConversationMenu } from "./TaskConversationMenu";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
-import { TaskboardIcon } from "./TaskboardIcon";
 
 const COLLAPSED_BY_DEFAULT = new Set<TaskStatus>(["backlog", "done", "canceled"]);
 
@@ -71,7 +70,7 @@ export function IssueListView({
             <section className={`issue-list-group status-${status}`} key={status}>
               <button className="issue-list-group-header" type="button" onClick={() => toggleStatus(status)} aria-expanded={!isCollapsed}>
                 <LinearIcon name={isCollapsed ? "chevronRight" : "chevronDown"} />
-                <span className="issue-list-status-icon"><StatusIcon status={status} /></span>
+                <span className="issue-list-status-icon"><StatusIcon status={status} color="currentColor" size={14} /></span>
                 <strong>{statusLabel}</strong>
                 <span>{statusTasks.length}</span>
               </button>
@@ -79,6 +78,7 @@ export function IssueListView({
                 <div className="issue-list-rows">
                   {statusTasks.length ? statusTasks.map((task) => {
                     const assigneeTarget = assigneeTargetForActor(task.assignee, currentUser) ?? "current-user";
+                    const displayIdentifier = task.externalKey ?? task.identifier;
                     return (
                       <div
                         className={`issue-list-row${presentations[task.id]?.unread ? " is-unread" : ""}`}
@@ -91,7 +91,7 @@ export function IssueListView({
                         }}
                       >
                         <span className="issue-list-title-cell">
-                          <small>{task.identifier}</small>
+                          <small>{displayIdentifier}</small>
                           <strong>{task.title}</strong>
                           {presentations[task.id]?.unread && <span className="task-unread-dot" aria-label={text("有未读更新", "Unread updates")} />}
                         </span>
@@ -102,13 +102,13 @@ export function IssueListView({
                               options={TASK_PRIORITIES.map((priority) => ({
                                 value: priority,
                                 label: taskPriorityLabel(language, priority),
-                                icon: <LinearPriorityIcon priority={priority} />,
+                                icon: <PriorityIcon priority={priority} size={14} />,
                                 className: `priority-${priority}`,
                               }))}
                               open={priorityMenuTaskId === task.id}
                               className="issue-list-property-picker"
                               triggerClassName={`issue-list-priority priority-${task.priority}`}
-                              ariaLabel={text(`${task.identifier} 优先级`, `${task.identifier} priority`)}
+                              ariaLabel={text(`${displayIdentifier} 优先级`, `${displayIdentifier} priority`)}
                               onOpenChange={(open) => setPriorityMenuTaskId(open ? task.id : null)}
                               onChange={(priority) => void onUpdate(task, { priority }).catch(() => {})}
                             />
@@ -127,11 +127,11 @@ export function IssueListView({
                           </span>
                           {task.dueDate && (
                             <label className="issue-list-date" onClick={stopRow}>
-                              <TaskboardIcon name="calendar" />
+                              <DueDateIcon color="currentColor" size={12} />
                               <span>{calendarDate(task.dueDate, locale)}</span>
                               <input
                                 type="date"
-                                aria-label={text(`${task.identifier} 截止日期`, `${task.identifier} due date`)}
+                                aria-label={text(`${displayIdentifier} 截止日期`, `${displayIdentifier} due date`)}
                                 value={task.dueDate}
                                 onChange={(event) => void onUpdate(task, {
                                   dueDate: event.target.value || null,
@@ -147,8 +147,9 @@ export function IssueListView({
                           <label className="issue-list-assignee" title={task.assignee.name} onClick={stopRow}>
                             <ActorAvatar actor={task.assignee} />
                             <select
-                              aria-label={text(`${task.identifier} 负责人`, `${task.identifier} assignee`)}
+                              aria-label={text(`${displayIdentifier} 负责人`, `${displayIdentifier} assignee`)}
                               value={assigneeTarget}
+                              disabled={task.source === "jira"}
                               onChange={(event) => void onUpdate(task, { assigneeTarget: event.target.value as "current-user" | "codex-agent" }).catch(() => {})}
                             >
                               <option value="current-user">{currentUser.name}</option>
